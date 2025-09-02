@@ -1,21 +1,75 @@
 package main
 
 import (
-	"fmt"
+        "fmt"
+        "html"
+        "io"
+        "log"
+        "net/http"
+        "regexp"
+        "strings"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+type Notice struct {
+        NumberTitle string
+        Type        string
+        Authority   string
+        Region      string
+        Country     string
+        Amount      string
+        Funding     string
+        ClosingDate string
+        ClosingTime string
+}
+
+func parseNotice(item string) Notice {
+	unescape := func(s string) string {
+		return strings.TrimSpace(html.UnescapeString(s))
+	}
+	get := func(pattern string) string {
+		re := regexp.MustCompile(pattern)
+		match := re.FindStringSubmatch(item)
+		if len(match) >= 2 {
+			return unescape(match[1])
+		}
+		return ""
+	}
+        getAny := func(patterns ...string) string {
+                for _, p := range patterns {
+                        if v := get(p); v != "" {
+                                return v
+                        }
+                }
+                return ""
+        }
+        return Notice{
+                NumberTitle: get(`<strong[^>]*>(?s)(.*?)</strong>`),
+                Authority:   get(`PO/CA:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                Type:        get(`Type:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                Region:      get(`Region\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                Country:     getAny(`Pays\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`, `Country\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                Amount:      get(`Amount\s*:\s*</div>\s*<div class="d-table-cell[^>]*>\s*(.*?)\s*</div>`),
+                Funding:     getAny(`Type de financement\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`, `Financing Type\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                ClosingDate: get(`Closing date\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+                ClosingTime: get(`Closing time\s*:\s*</div>\s*<div class="d-table-cell">\s*(.*?)\s*</div>`),
+        }
+}
 
 func main() {
-	//TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-	// to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-	s := "gopher"
-	fmt.Printf("Hello and welcome, %s!\n", s)
-
-	for i := 1; i <= 5; i++ {
-		//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-		// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-		fmt.Println("i =", 100/i)
-	}
+        url := "https://www.armp.cm/recherche_avancee?recherche_avancee_do=1&reference_avis=&maitre_ouvrage=0&region=0&departement=0&type_publication%5B%5D=AO"
+        resp, err := http.Get(url)
+        if err != nil {
+                log.Fatalf("request: %v", err)
+        }
+        defer resp.Body.Close()
+        body, err := io.ReadAll(resp.Body)
+        if err != nil {
+                log.Fatalf("read body: %v", err)
+        }
+        liRe := regexp.MustCompile(`(?s)<li[^>]*class="list-group-item[^"]*".*?</li>`)
+        items := liRe.FindAllString(string(body), -1)
+        for _, item := range items {
+                n := parseNotice(item)
+                fmt.Printf("%+v\n\n", n)
+        }
 }
