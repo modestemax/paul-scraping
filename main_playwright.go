@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -14,9 +15,8 @@ type Notice struct {
 	Type        string
 	Authority   string
 	Region      string
-	Country     string
 	Amount      string
-	Funding     string
+	PublishedOn string
 	ClosingDate string
 	ClosingTime string
 }
@@ -60,6 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("query list items: %v", err)
 	}
+	log.Printf("items found: %d", len(items))
 
 	textContent := func(el playwright.ElementHandle, sel string) string {
 		h, err := el.QuerySelector(sel)
@@ -73,17 +74,64 @@ func main() {
 		return strings.TrimSpace(txt)
 	}
 
+	// Helper: find the value next to a label, trying multiple label variants.
+	labelValue := func(el playwright.ElementHandle, labels ...string) string {
+		for _, lbl := range labels {
+			sel := fmt.Sprintf("div:has-text(\"%s\") + div", lbl)
+			if val := textContent(el, sel); val != "" {
+				return val
+			}
+		}
+		return ""
+	}
+
+	// Detect page language to prioritize label variants
+	pageLang := ""
+	if htmlEl, err := page.QuerySelector("html"); err == nil && htmlEl != nil {
+		if lang, err := htmlEl.GetAttribute("lang"); err == nil && lang != "" {
+			pageLang = strings.ToLower(strings.TrimSpace(lang))
+		}
+	}
+	log.Printf("page lang: %s", pageLang)
+
 	for _, item := range items {
+		// Log the raw HTML of the item before parsing
+		if html, err := item.InnerHTML(); err == nil {
+			log.Printf("ITEM HTML:\n%s\n", strings.TrimSpace(html))
+		} else {
+			log.Printf("failed to get item innerHTML: %v", err)
+		}
+		// Build ordered variants depending on detected lang
+		concat := func(a, b []string) []string { return append(append([]string{}, a...), b...) }
+
+		var authVariants, typeVariants, regionVariants, amountVariants, publishedVariants, dateVariants, timeVariants []string
+		if strings.HasPrefix(pageLang, "fr") {
+			authVariants = concat([]string{"MO/AC:"}, []string{"PO/CA:"})
+			typeVariants = concat([]string{"Type", "Type:"}, []string{"Type", "Type:"})
+			regionVariants = concat([]string{"Région", "Région:", "Region", "Region:"}, []string{"Region", "Region:"})
+			amountVariants = concat([]string{"Montant", "Montant:"}, []string{"Amount", "Amount:"})
+			publishedVariants = concat([]string{"Publié le", "Publié le :", "Publié le:"}, []string{"Published on", "Published on:", "Published:"})
+			dateVariants = concat([]string{"Date de clôture", "Date de cloture"}, []string{"Closing date"})
+			timeVariants = concat([]string{"Heure de clôture", "Heure de cloture"}, []string{"Closing time"})
+		} else {
+			authVariants = concat([]string{"PO/CA:"}, []string{"MO/AC:"})
+			typeVariants = concat([]string{"Type", "Type:"}, []string{"Type", "Type:"})
+			regionVariants = concat([]string{"Region", "Region:"}, []string{"Région", "Région:"})
+			amountVariants = concat([]string{"Amount", "Amount:"}, []string{"Montant", "Montant:"})
+			publishedVariants = concat([]string{"Published on", "Published on:", "Published:"}, []string{"Publié le", "Publié le :", "Publié le:"})
+			dateVariants = concat([]string{"Closing date"}, []string{"Date de clôture", "Date de cloture"})
+			timeVariants = concat([]string{"Closing time"}, []string{"Heure de clôture", "Heure de cloture"})
+		}
+
 		notice := Notice{
 			NumberTitle: textContent(item, "strong"),
-			Authority:   textContent(item, "div:has-text(\"PO/CA:\") + div"),
-			Type:        textContent(item, "div:has-text(\"Type:\") + div"),
-			Region:      textContent(item, "div:has-text(\"Region\") + div"),
-			Country:     textContent(item, "div:has-text(\"Pays\") + div"),
-			Amount:      textContent(item, "div:has-text(\"Amount\") + div"),
-			Funding:     textContent(item, "div:has-text(\"Type de financement\") + div"),
-			ClosingDate: textContent(item, "div:has-text(\"Closing date\") + div"),
-			ClosingTime: textContent(item, "div:has-text(\"Closing time\") + div"),
+			Authority:   labelValue(item, authVariants...),
+			Type:        labelValue(item, typeVariants...),
+			Region:      labelValue(item, regionVariants...),
+			Amount:      labelValue(item, amountVariants...),
+			PublishedOn: labelValue(item, publishedVariants...),
+			ClosingDate: labelValue(item, dateVariants...),
+			ClosingTime: labelValue(item, timeVariants...),
 		}
 		log.Printf("%+v\n", notice)
 	}
