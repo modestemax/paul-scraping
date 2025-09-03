@@ -3,11 +3,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/playwright-community/playwright-go"
@@ -31,6 +33,7 @@ func main() {
 	outputFlag := flag.String("output", "", "output file path (optional); stdout if empty")
 	showHTMLFlag := flag.Bool("show-html", false, "also log each item's inner HTML before parsing")
 	autoInstallFlag := flag.Bool("auto-install", true, "auto-install Playwright driver/browsers if missing")
+	pauseFlag := flag.Bool("pause", false, "on Windows, wait for Enter before exiting")
 	flag.Parse()
 
 	pw, err := playwright.Run()
@@ -208,5 +211,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(out), outputPath)
 	} else {
 		os.Stdout.Write(out)
+	}
+
+	// Optional: pause on Windows to keep console open when double-clicked
+	pauseEnv := strings.ToLower(strings.TrimSpace(os.Getenv("PAUSE_ON_EXIT")))
+	pauseOnExit := *pauseFlag || pauseEnv == "1" || pauseEnv == "true" || pauseEnv == "yes" || pauseEnv == "on" || pauseEnv == "y"
+	if runtime.GOOS == "windows" && pauseOnExit {
+		fmt.Fprint(os.Stderr, "\nPress Enter to exit...")
+		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 	}
 }
