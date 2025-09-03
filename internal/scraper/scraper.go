@@ -9,29 +9,8 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
-// Options controls scraping behaviour.
-type Options struct {
-	URL         string
-	ShowHTML    bool
-	AutoInstall bool
-}
-
-// Scrape visits the given URL with Playwright, extracts notice items, and returns them.
-func Scrape(ctx context.Context, opts Options) ([]Notice, error) {
-	// Attempt to start Playwright; auto-install on demand.
-	pw, err := playwright.Run()
-	if err != nil && opts.AutoInstall && strings.Contains(err.Error(), "please install the driver") {
-		log.Printf("Playwright driver missing; attempting auto-install…")
-		if err2 := playwright.Install(); err2 != nil {
-			return nil, fmt.Errorf("auto-install failed: %w", err2)
-		}
-		pw, err = playwright.Run()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("could not start Playwright: %w", err)
-	}
-	defer pw.Stop()
-
+// Scrape uses an existing Playwright instance to visit the URL and extract notices.
+func Scrape(ctx context.Context, pw *playwright.Playwright, url string, showHTML bool) ([]Notice, error) {
 	browser, err := pw.Chromium.Launch()
 	if err != nil {
 		return nil, fmt.Errorf("could not launch browser: %w", err)
@@ -47,7 +26,7 @@ func Scrape(ctx context.Context, opts Options) ([]Notice, error) {
 		return nil, fmt.Errorf("new page: %w", err)
 	}
 
-	if _, err = page.Goto(opts.URL); err != nil {
+	if _, err = page.Goto(url); err != nil {
 		return nil, fmt.Errorf("goto: %w", err)
 	}
 	if _, err := page.WaitForSelector(".list-group"); err != nil {
@@ -65,7 +44,6 @@ func Scrape(ctx context.Context, opts Options) ([]Notice, error) {
 	}
 	log.Printf("items found: %d", len(items))
 
-	// Helpers
 	textContent := func(el playwright.ElementHandle, sel string) string {
 		h, err := el.QuerySelector(sel)
 		if err != nil || h == nil {
@@ -99,7 +77,7 @@ func Scrape(ctx context.Context, opts Options) ([]Notice, error) {
 
 	notices := make([]Notice, 0, len(items))
 	for _, item := range items {
-		if opts.ShowHTML {
+		if showHTML {
 			if html, err := item.InnerHTML(); err == nil {
 				log.Printf("ITEM HTML:\n%s\n", strings.TrimSpace(html))
 			} else {
