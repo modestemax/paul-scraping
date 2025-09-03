@@ -3,25 +3,35 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/playwright-community/playwright-go"
+	"gopkg.in/yaml.v3"
 )
 
 type Notice struct {
-	NumberTitle string
-	Type        string
-	Authority   string
-	Region      string
-	Amount      string
-	PublishedOn string
-	ClosingDate string
-	ClosingTime string
+	NumberTitle string `yaml:"number_title" json:"number_title"`
+	Type        string `yaml:"type" json:"type"`
+	Authority   string `yaml:"authority" json:"authority"`
+	Region      string `yaml:"region" json:"region"`
+	Amount      string `yaml:"amount" json:"amount"`
+	PublishedOn string `yaml:"published_on" json:"published_on"`
+	ClosingDate string `yaml:"closing_date" json:"closing_date"`
+	ClosingTime string `yaml:"closing_time" json:"closing_time"`
 }
 
 func main() {
+	// Flags: format (json|yaml), output file, and show-html toggle
+	formatFlag := flag.String("format", "", "output format: json or yaml (default yaml)")
+	outputFlag := flag.String("output", "", "output file path (optional); stdout if empty")
+	showHTMLFlag := flag.Bool("show-html", false, "also log each item's inner HTML before parsing")
+	flag.Parse()
+
 	pw, err := playwright.Run()
 	if err != nil {
 		log.Fatalf("could not start Playwright: %v", err)
@@ -94,12 +104,41 @@ func main() {
 	}
 	log.Printf("page lang: %s", pageLang)
 
+	// Resolve output format: flags override env FORMAT; default yaml
+	format := "yaml"
+	if f := strings.ToLower(strings.TrimSpace(*formatFlag)); f != "" {
+		format = f
+	} else if f := strings.ToLower(strings.TrimSpace(os.Getenv("FORMAT"))); f != "" {
+		format = f
+	}
+	if format != "yaml" && format != "json" {
+		log.Printf("unknown format %q; defaulting to yaml", format)
+		format = "yaml"
+	}
+
+	// Resolve output file: flag overrides env OUTPUT_FILE
+	outputPath := *outputFlag
+	if outputPath == "" {
+		outputPath = strings.TrimSpace(os.Getenv("OUTPUT_FILE"))
+	}
+
+	// Toggle HTML dump via env SHOW_HTML (true/1/yes) or --show-html
+	showHTML := func() bool {
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("SHOW_HTML")))
+		envOn := v == "1" || v == "true" || v == "yes" || v == "y" || v == "on"
+		return envOn || *showHTMLFlag
+	}()
+
+	notices := make([]Notice, 0, len(items))
+
 	for _, item := range items {
-		// Log the raw HTML of the item before parsing
-		if html, err := item.InnerHTML(); err == nil {
-			log.Printf("ITEM HTML:\n%s\n", strings.TrimSpace(html))
-		} else {
-			log.Printf("failed to get item innerHTML: %v", err)
+		if showHTML {
+			// Log the raw HTML of the item before parsing
+			if html, err := item.InnerHTML(); err == nil {
+				log.Printf("ITEM HTML:\n%s\n", strings.TrimSpace(html))
+			} else {
+				log.Printf("failed to get item innerHTML: %v", err)
+			}
 		}
 		// Build ordered variants depending on detected lang
 		concat := func(a, b []string) []string { return append(append([]string{}, a...), b...) }
@@ -133,6 +172,33 @@ func main() {
 			ClosingDate: labelValue(item, dateVariants...),
 			ClosingTime: labelValue(item, timeVariants...),
 		}
-		log.Printf("%+v\n", notice)
+		notices = append(notices, notice)
+	}
+
+	// Marshal output
+	var out []byte
+	switch format {
+	case "json":
+		if b, err := json.MarshalIndent(notices, "", "  "); err == nil {
+			out = b
+		} else {
+			log.Fatalf("json marshal: %v", err)
+		}
+	default: // yaml
+		if b, err := yaml.Marshal(notices); err == nil {
+			out = b
+		} else {
+			log.Fatalf("yaml marshal: %v", err)
+		}
+	}
+
+	// Write to file or stdout
+	if outputPath != "" {
+		if err := os.WriteFile(outputPath, out, 0o644); err != nil {
+			log.Fatalf("write output file: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(out), outputPath)
+	} else {
+		os.Stdout.Write(out)
 	}
 }
