@@ -56,24 +56,25 @@ func Scrape(ctx context.Context, pw *playwright.Playwright, url string, showHTML
 		return strings.TrimSpace(txt)
 	}
 
-	labelValue := func(el playwright.ElementHandle, labels ...string) string {
-		for _, lbl := range labels {
-			sel := fmt.Sprintf("div:has-text(\"%s\") + div", lbl)
-			if val := textContent(el, sel); val != "" {
-				return val
-			}
-		}
-		return ""
+	// Helpers for label normalization (accent stripping, punctuation, spaces)
+	replacer := strings.NewReplacer(
+		"é", "e", "è", "e", "ê", "e", "ë", "e",
+		"à", "a", "â", "a", "ä", "a",
+		"î", "i", "ï", "i",
+		"ô", "o", "ö", "o",
+		"ù", "u", "û", "u", "ü", "u",
+		"ç", "c",
+		"’", "'",
+		":", "",
+	)
+	normalize := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = replacer.Replace(s)
+		// collapse whitespace
+		fields := strings.Fields(s)
+		s = strings.Join(fields, " ")
+		return s
 	}
-
-	// Detect page language to prioritize label variants
-	pageLang := ""
-	if htmlEl, err := page.QuerySelector("html"); err == nil && htmlEl != nil {
-		if lang, err := htmlEl.GetAttribute("lang"); err == nil && lang != "" {
-			pageLang = strings.ToLower(strings.TrimSpace(lang))
-		}
-	}
-	log.Printf("page lang: %s", pageLang)
 
 	notices := make([]Notice, 0, len(items))
 	for _, item := range items {
@@ -84,38 +85,48 @@ func Scrape(ctx context.Context, pw *playwright.Playwright, url string, showHTML
 				log.Printf("failed to get item innerHTML: %v", err)
 			}
 		}
+		notice := Notice{NumberTitle: textContent(item, "strong")}
 
-		// Build ordered variants depending on detected lang
-		concat := func(a, b []string) []string { return append(append([]string{}, a...), b...) }
+		// Extract all label/value cells and map via normalized label synonyms
+		cells, err := item.QuerySelectorAll("div.d-table-cell")
+		if err == nil && len(cells) >= 2 {
+			for i := 0; i+1 < len(cells); i += 2 {
+				rawLabel, _ := cells[i].TextContent()
+				rawValue, _ := cells[i+1].TextContent()
+				label := normalize(rawLabel)
+				value := strings.TrimSpace(rawValue)
 
-		var authVariants, typeVariants, regionVariants, amountVariants, publishedVariants, dateVariants, timeVariants []string
-		if strings.HasPrefix(pageLang, "fr") {
-			authVariants = concat([]string{"MO/AC:"}, []string{"PO/CA:"})
-			typeVariants = concat([]string{"Type", "Type:"}, []string{"Type", "Type:"})
-			regionVariants = concat([]string{"Région", "Région:", "Region", "Region:"}, []string{"Region", "Region:"})
-			amountVariants = concat([]string{"Montant", "Montant:"}, []string{"Amount", "Amount:"})
-			publishedVariants = concat([]string{"Publié le", "Publié le :", "Publié le:"}, []string{"Published on", "Published on:", "Published:"})
-			dateVariants = concat([]string{"Date de clôture", "Date de cloture"}, []string{"Closing date"})
-			timeVariants = concat([]string{"Heure de clôture", "Heure de cloture"}, []string{"Closing time"})
-		} else {
-			authVariants = concat([]string{"PO/CA:"}, []string{"MO/AC:"})
-			typeVariants = concat([]string{"Type", "Type:"}, []string{"Type", "Type:"})
-			regionVariants = concat([]string{"Region", "Region:"}, []string{"Région", "Région:"})
-			amountVariants = concat([]string{"Amount", "Amount:"}, []string{"Montant", "Montant:"})
-			publishedVariants = concat([]string{"Published on", "Published on:", "Published:"}, []string{"Publié le", "Publié le :", "Publié le:"})
-			dateVariants = concat([]string{"Closing date"}, []string{"Date de clôture", "Date de cloture"})
-			timeVariants = concat([]string{"Closing time"}, []string{"Heure de clôture", "Heure de cloture"})
-		}
-
-		notice := Notice{
-			NumberTitle: textContent(item, "strong"),
-			Authority:   labelValue(item, authVariants...),
-			Type:        labelValue(item, typeVariants...),
-			Region:      labelValue(item, regionVariants...),
-			Amount:      labelValue(item, amountVariants...),
-			PublishedOn: labelValue(item, publishedVariants...),
-			ClosingDate: labelValue(item, dateVariants...),
-			ClosingTime: labelValue(item, timeVariants...),
+				switch label {
+				case "mo/ac", "po/ca":
+					if notice.Authority == "" {
+						notice.Authority = value
+					}
+				case "type":
+					if notice.Type == "" {
+						notice.Type = value
+					}
+				case "region":
+					if notice.Region == "" {
+						notice.Region = value
+					}
+				case "montant", "amount":
+					if notice.Amount == "" {
+						notice.Amount = value
+					}
+				case "publie le", "published on", "published":
+					if notice.PublishedOn == "" {
+						notice.PublishedOn = value
+					}
+				case "date de cloture", "closing date":
+					if notice.ClosingDate == "" {
+						notice.ClosingDate = value
+					}
+				case "heure de cloture", "closing time":
+					if notice.ClosingTime == "" {
+						notice.ClosingTime = value
+					}
+				}
+			}
 		}
 		notices = append(notices, notice)
 	}
