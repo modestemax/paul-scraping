@@ -30,9 +30,17 @@ func main() {
 	formatFlag := flag.String("format", "", "output format: json or yaml (default yaml)")
 	outputFlag := flag.String("output", "", "output file path (optional); stdout if empty")
 	showHTMLFlag := flag.Bool("show-html", false, "also log each item's inner HTML before parsing")
+	autoInstallFlag := flag.Bool("auto-install", true, "auto-install Playwright driver/browsers if missing")
 	flag.Parse()
 
 	pw, err := playwright.Run()
+	if err != nil && *autoInstallFlag && strings.Contains(err.Error(), "please install the driver") {
+		log.Printf("Playwright driver missing; attempting auto-install…")
+		if err2 := playwright.Install(); err2 != nil {
+			log.Fatalf("auto-install failed: %v", err2)
+		}
+		pw, err = playwright.Run()
+	}
 	if err != nil {
 		log.Fatalf("could not start Playwright: %v", err)
 	}
