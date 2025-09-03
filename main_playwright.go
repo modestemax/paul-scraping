@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	ps "github.com/mitchellh/go-ps"
 	"github.com/playwright-community/playwright-go"
 	"gopkg.in/yaml.v3"
 )
@@ -216,6 +217,22 @@ func main() {
 	// Optional: pause on Windows to keep console open when double-clicked
 	pauseEnv := strings.ToLower(strings.TrimSpace(os.Getenv("PAUSE_ON_EXIT")))
 	pauseOnExit := *pauseFlag || pauseEnv == "1" || pauseEnv == "true" || pauseEnv == "yes" || pauseEnv == "on" || pauseEnv == "y"
+	// Auto-enable pause if launched from Explorer (double-click)
+	if runtime.GOOS == "windows" && !pauseOnExit {
+		pid := os.Getppid()
+		for i := 0; i < 3 && pid > 0; i++ {
+			proc, err := ps.FindProcess(pid)
+			if err != nil || proc == nil {
+				break
+			}
+			name := strings.ToLower(proc.Executable())
+			if name == "explorer.exe" {
+				pauseOnExit = true
+				break
+			}
+			pid = proc.PPid()
+		}
+	}
 	if runtime.GOOS == "windows" && pauseOnExit {
 		fmt.Fprint(os.Stderr, "\nPress Enter to exit...")
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
